@@ -1,0 +1,737 @@
+# Technical Requirements Document
+### IntentList — Context-Aware Task Completion Engine
+
+**Version:** 1.0
+**Date:** March 10, 2026
+**Author:** Co-founder & Tech Lead
+**Status:** Draft — Engineering Review
+
+---
+
+## 1. Document Purpose
+
+This TRD translates the product requirements from PRD v1.0 into precise technical specifications. It covers system architecture, data models, API contracts, on-device ML, security, and infrastructure decisions. Every engineer on the team should be able to pick up their assigned module from this document and build without ambiguity.
+
+---
+
+## 2. System Architecture Overview
+
+### 2.1 High-Level Architecture
+
+IntentList follows a **local-first architecture** — the app is fully functional offline, and the server exists primarily for sync, auth, and team collaboration. Individual user data (tasks, mood history, friction scores) lives on-device. Server only holds what is absolutely necessary for cross-device sync and team features.
+
+### 2.2 Architecture Principles
+
+1. **Local-first:** All reads and writes hit SQLite first. Server sync is background, non-blocking
+2. **Privacy by architecture:** Task content, mood states, and friction scores never leave the device for individual users — enforced at code level, not just policy
+3. **Offline-capable:** Core task management works 100% without network
+4. **Optimistic UI:** All user actions reflect immediately in UI; sync happens asynchronously
+5. **Fail-safe sync:** Conflict resolution follows last-write-wins with a full conflict log for debugging
+
+---
+
+## 3. Technology Stack — Detailed
+
+### 3.1 Frontend
+
+| Layer | Technology | Version | Justification |
+|---|---|---|---|
+| Framework | React Native (Expo) | SDK 52+ | Cross-platform, team familiarity, large ecosystem |
+| Navigation | Expo Router (file-based) | v4 | Cleaner routing, deep link support built-in |
+| State Management | Zustand | v5 | Minimal boilerplate, no unnecessary re-renders |
+| Local DB | op-sqlite | latest | Faster than expo-sqlite, supports WAL mode |
+| ORM | Drizzle ORM | latest | Type-safe SQL, works great with op-sqlite |
+| Animations | React Native Reanimated | v3 | 60fps on UI thread, required for swipe gestures |
+| Gestures | React Native Gesture Handler | v2 | Required for Reanimated v3, handles swipe cards |
+| On-Device ML | TensorFlow Lite React Native | latest | Runs inference locally, no data leaves device |
+| Push Notifications | Expo Notifications + FCM | latest | Cross-platform notification handling |
+| HTTP Client | TanStack Query + Axios | latest | Smart caching, background refetch, retry logic |
+
+### 3.2 Backend
+
+| Layer | Technology | Justification |
+|---|---|---|
+| Platform | Supabase | Managed Postgres, Auth, Realtime, Storage in one |
+| Database | PostgreSQL 16 | Via Supabase, row-level security built-in |
+| Auth | Supabase Auth | Email/password, Google OAuth, session management |
+| Server Functions | Supabase Edge Functions (Deno) | Lightweight, low-latency, runs close to DB |
+| Realtime | Supabase Realtime | Team task sync via PostgreSQL change streams |
+| File Storage | Supabase Storage | User data exports (JSON), profile photos |
+
+### 3.3 Infrastructure and DevOps
+
+| Tool | Purpose |
+|---|---|
+| GitHub Actions | CI/CD pipelines |
+| EAS Build (Expo) | Mobile app builds and OTA updates |
+| Vercel | Web app hosting |
+| Sentry | Error monitoring and crash reporting |
+| PostHog (self-hosted) | Product analytics — privacy-preserving |
+| Doppler | Secret/environment variable management |
+
+---
+
+## 4. Database Design
+
+### 4.1 Local SQLite Schema (On-Device)
+
+All individual user data lives here. This schema is managed by Drizzle ORM with migrations.
+
+```sql
+-- Users table (local profile cache)
+CREATE TABLE users (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  email TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  preferences TEXT NOT NULL
+);
+
+-- Tasks table
+CREATE TABLE tasks (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  title TEXT NOT NULL,
+  notes TEXT,
+  status TEXT NOT NULL DEFAULT 'active',
+  required_mood TEXT,
+  estimated_duration INTEGER,
+  person_tag TEXT,
+  location_tag TEXT,
+  location_lat REAL,
+  location_lng REAL,
+  location_radius_meters INTEGER DEFAULT 200,
+  due_date INTEGER,
+  completed_at INTEGER,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  sort_order INTEGER NOT NULL,
+  friction_score INTEGER DEFAULT 0,
+  friction_intervened_at INTEGER,
+  times_snoozed INTEGER DEFAULT 0,
+  times_due_date_moved INTEGER DEFAULT 0,
+  times_scrolled_past INTEGER DEFAULT 0,
+  is_synced INTEGER DEFAULT 0,
+  server_updated_at INTEGER,
+  FOREIGN KEY (user_id) REFERENCES users(id)
+);
+
+-- Sub-tasks table
+CREATE TABLE subtasks (
+  id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL,
+  title TEXT NOT NULL,
+  is_completed INTEGER DEFAULT 0,
+  sort_order INTEGER NOT NULL,
+  created_at INTEGER NOT NULL,
+  FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+);
+
+-- Mood sessions table (behavioral data for ML)
+CREATE TABLE mood_sessions (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  mood TEXT NOT NULL,
+  session_start INTEGER NOT NULL,
+  session_end INTEGER,
+  tasks_completed_in_session INTEGER DEFAULT 0,
+  tasks_skipped_in_session INTEGER DEFAULT 0
+);
+
+-- Friction events table
+CREATE TABLE friction_events (
+  id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL,
+  event_type TEXT NOT NULL,
+  event_data TEXT,
+  created_at INTEGER NOT NULL,
+  FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+);
+
+-- Sunday Reckoning log
+CREATE TABLE reckoning_sessions (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  started_at INTEGER NOT NULL,
+  completed_at INTEGER,
+  tasks_reviewed INTEGER DEFAULT 0,
+  tasks_committed INTEGER DEFAULT 0,
+  tasks_deferred INTEGER DEFAULT 0,
+  tasks_deleted INTEGER DEFAULT 0
+);
+
+-- Sync queue (pending server operations)
+CREATE TABLE sync_queue (
+  id TEXT PRIMARY KEY,
+  operation TEXT NOT NULL,
+  table_name TEXT NOT NULL,
+  record_id TEXT NOT NULL,
+  payload TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  retry_count INTEGER DEFAULT 0
+);
+```
+
+---
+
+### 4.2 Supabase (Server) Schema
+
+Server only holds data required for cross-device sync and team features.
+
+```sql
+-- Profiles (auth metadata)
+CREATE TABLE profiles (
+  id UUID PRIMARY KEY REFERENCES auth.users(id),
+  display_name TEXT,
+  avatar_url TEXT,
+  plan TEXT DEFAULT 'free',
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Sync records (for multi-device individual users)
+CREATE TABLE task_sync (
+  id UUID PRIMARY KEY,
+  user_id UUID NOT NULL REFERENCES profiles(id),
+  encrypted_payload TEXT NOT NULL,
+  record_id TEXT NOT NULL,
+  operation TEXT NOT NULL,
+  client_updated_at TIMESTAMPTZ NOT NULL,
+  server_created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Team workspaces
+CREATE TABLE workspaces (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name TEXT NOT NULL,
+  owner_id UUID NOT NULL REFERENCES profiles(id),
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  plan TEXT DEFAULT 'team'
+);
+
+-- Workspace members
+CREATE TABLE workspace_members (
+  workspace_id UUID REFERENCES workspaces(id) ON DELETE CASCADE,
+  user_id UUID REFERENCES profiles(id) ON DELETE CASCADE,
+  role TEXT DEFAULT 'member',
+  joined_at TIMESTAMPTZ DEFAULT NOW(),
+  PRIMARY KEY (workspace_id, user_id)
+);
+
+-- Team tasks (only for paid team tier)
+CREATE TABLE team_tasks (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  workspace_id UUID NOT NULL REFERENCES workspaces(id),
+  created_by UUID NOT NULL REFERENCES profiles(id),
+  assigned_to UUID REFERENCES profiles(id),
+  title TEXT NOT NULL,
+  status TEXT DEFAULT 'active',
+  is_blocked INTEGER DEFAULT 0,
+  blocked_reason TEXT,
+  due_date TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Aggregated analytics (anonymous, no task content)
+CREATE TABLE usage_events (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES profiles(id),
+  event_type TEXT NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+```
+
+---
+
+## 5. API Specifications
+
+### 5.1 API Design Principles
+
+- All individual task operations are local-first (SQLite). No API calls for core task CRUD
+- Server APIs used for: auth, team operations, sync, and analytics events
+- REST for simple CRUD, Supabase Realtime (WebSocket) for team sync
+
+### 5.2 Authentication Endpoints
+
+**POST /auth/signup**
+```
+Request:
+{
+  "email": "priya@example.com",
+  "password": "min_8_chars",
+  "display_name": "Priya"
+}
+
+Response 201:
+{
+  "success": true,
+  "data": {
+    "user_id": "uuid",
+    "access_token": "jwt",
+    "expires_at": 1741564800
+  }
+}
+```
+
+**POST /auth/signin**
+```
+Request:
+{
+  "email": "priya@example.com",
+  "password": "password"
+}
+
+Response 200:
+{
+  "success": true,
+  "data": {
+    "access_token": "jwt",
+    "profile": {
+      "id": "uuid",
+      "display_name": "Priya",
+      "plan": "free"
+    }
+  }
+}
+```
+
+### 5.3 Sync Endpoints (Individual User)
+
+**POST /sync/push** — Pushes local changes to server for multi-device sync
+```
+Headers: Authorization: Bearer {access_token}
+
+Request:
+{
+  "operations": [
+    {
+      "record_id": "local-uuid",
+      "operation": "UPSERT",
+      "encrypted_payload": "base64-aes256",
+      "client_updated_at": "2026-03-10T04:00:00Z"
+    }
+  ]
+}
+
+Response 200:
+{
+  "success": true,
+  "data": { "processed": 5 }
+}
+```
+
+**GET /sync/pull** — Pulls server changes since last sync
+```
+Headers: Authorization: Bearer {access_token}
+Query: ?since=2026-03-09T04:00:00Z
+
+Response 200:
+{
+  "success": true,
+  "data": {
+    "operations": [...]
+  }
+}
+```
+
+### 5.4 Team Task Endpoints
+
+**POST /workspaces/{workspace_id}/tasks**
+```
+Request:
+{
+  "title": "Finalize onboarding copy",
+  "assigned_to": "user-uuid",
+  "due_date": "2026-03-15T00:00:00Z"
+}
+
+Response 201:
+{
+  "success": true,
+  "data": { task object }
+}
+```
+
+**GET /workspaces/{workspace_id}/insights**
+
+Returns weekly blocker intelligence report (paid tier only).
+
+### 5.5 Analytics Events Endpoint
+
+**POST /analytics/events** — Fires anonymized usage events
+
+```
+Request:
+{
+  "events": [
+    { "event_type": "task_completed", "created_at": "2026-03-10T04:10:00Z" },
+    { "event_type": "reckoning_completed", "created_at": "2026-03-09T19:05:00Z" }
+  ]
+}
+
+Response 200: { "success": true }
+```
+
+---
+
+## 6. Core Business Logic — Service Layer
+
+### 6.1 Mood Matching Service
+
+```typescript
+type MoodState = 'focused' | 'low_energy' | 'between_things' | 'creative' | 'quick_clear';
+
+const MOOD_COMPATIBILITY: Record<MoodState, string[]> = {
+  focused:         ['focused', 'any'],
+  low_energy:      ['low_energy', 'quick_clear', 'any'],
+  between_things:  ['between_things', 'quick_clear', 'any'],
+  creative:        ['creative', 'focused', 'any'],
+  quick_clear:     ['quick_clear', 'low_energy', 'any'],
+};
+
+const MOOD_MAX_DURATION: Record<MoodState, number | null> = {
+  focused:         null,
+  low_energy:      30,
+  between_things:  30,
+  creative:        null,
+  quick_clear:     15,
+};
+
+function getTasksForMood(allActiveTasks: Task[], mood: MoodState, limit: number = 6): Task[] {
+  const compatibleMoods = MOOD_COMPATIBILITY[mood];
+  const maxDuration = MOOD_MAX_DURATION[mood];
+
+  return allActiveTasks
+    .filter(task => {
+      const moodMatch = compatibleMoods.includes(task.required_mood ?? 'any');
+      const durationMatch = maxDuration === null || (task.estimated_duration ?? 0) <= maxDuration;
+      return moodMatch && durationMatch;
+    })
+    .sort((a, b) => {
+      if (b.friction_score !== a.friction_score) {
+        return b.friction_score - a.friction_score;
+      }
+      return a.sort_order - b.sort_order;
+    })
+    .slice(0, limit);
+}
+```
+
+### 6.2 Friction Score Service
+
+```typescript
+const FRICTION_WEIGHTS = {
+  SCROLL_PAST: 1,
+  SNOOZE: 2,
+  DUE_DATE_MOVE: 3,
+  SESSION_NO_INTERACT: 1,
+};
+
+const FRICTION_INTERVENTION_THRESHOLD = 8;
+
+async function recordFrictionEvent(taskId: string, eventType: string): Promise<void> {
+  const weight = FRICTION_WEIGHTS[eventType];
+  
+  await db.run(`
+    UPDATE tasks 
+    SET friction_score = friction_score + ?, updated_at = ?
+    WHERE id = ?
+  `, [weight, Date.now(), taskId]);
+}
+
+async function getTaskForIntervention(userId: string): Promise<Task | null> {
+  return db.get(`
+    SELECT * FROM tasks
+    WHERE user_id = ? AND status = 'active' AND friction_score >= ?
+    ORDER BY friction_score DESC LIMIT 1
+  `, [userId, FRICTION_INTERVENTION_THRESHOLD]);
+}
+```
+
+### 6.3 Task Cap Enforcement Service
+
+```typescript
+const ACTIVE_TASK_LIMIT = 15;
+
+async function canAddActiveTask(userId: string): Promise<boolean> {
+  const result = await db.get(
+    `SELECT COUNT(*) as count FROM tasks WHERE user_id = ? AND status = 'active'`,
+    [userId]
+  );
+  return result.count < ACTIVE_TASK_LIMIT;
+}
+
+async function addTaskWithCapCheck(userId: string, taskData: any) {
+  const canAdd = await canAddActiveTask(userId);
+  
+  if (!canAdd) {
+    const candidates = await db.all(`
+      SELECT * FROM tasks
+      WHERE user_id = ? AND status = 'active'
+      ORDER BY friction_score DESC, created_at ASC LIMIT 3
+    `, [userId]);
+    return { success: false, needsResolution: true, candidates };
+  }
+  
+  return { success: true };
+}
+```
+
+### 6.4 Sunday Reckoning Service
+
+```typescript
+const RECKONING_CRITERIA = {
+  MIN_TIMES_MOVED: 2,
+  MIN_TIMES_SNOOZED: 2,
+  UNTOUCHED_DAYS: 7,
+};
+
+async function getReckoningTasks(userId: string): Promise<Task[]> {
+  const sevenDaysAgo = Date.now() - (7 * 24 * 60 * 60 * 1000);
+  
+  return db.all(`
+    SELECT * FROM tasks
+    WHERE user_id = ? AND status = 'active'
+    AND (times_due_date_moved >= ? OR times_snoozed >= ? OR updated_at < ?)
+    ORDER BY friction_score DESC
+  `, [userId, RECKONING_CRITERIA.MIN_TIMES_MOVED, RECKONING_CRITERIA.MIN_TIMES_SNOOZED, sevenDaysAgo]);
+}
+```
+
+---
+
+## 7. On-Device ML Architecture (Phase 2)
+
+### 7.1 What We're Learning
+
+**Model 1 — Mood-Task Affinity Learner**
+- Input: current mood, task mood, duration, time, day, friction score
+- Output: 0–1 probability of task completion in session
+- Architecture: TF Lite binary classification, ~200KB
+- Training: Federated on-device, every 50 completed tasks or 14 days
+
+**Model 2 — Friction Predictor**
+- Input: task age, scroll-past count, mood mismatch, duration vs average
+- Output: 0–1 friction probability
+- Architecture: TF Lite regression, ~150KB
+- Use: Proactive intervention prompts
+
+### 7.2 Model Storage
+
+```
+/documents/ml/
+  ├── mood_affinity_model.tflite
+  ├── mood_affinity_model_local.tflite
+  ├── friction_predictor.tflite
+  └── model_metadata.json
+```
+
+---
+
+## 8. True Context Moment System (Phase 3)
+
+### 8.1 Signal Processing
+
+```typescript
+interface ContextSignals {
+  isNearLocation: boolean;
+  minutesFreeOnCalendar: number;
+  currentHour: number;
+  taskDurationMinutes: number;
+  isLaptopMode: boolean;
+}
+
+function evaluateTrueContextMoment(signals: ContextSignals): boolean {
+  return signals.isNearLocation 
+    && signals.minutesFreeOnCalendar >= (signals.taskDurationMinutes + 10)
+    && signals.currentHour >= 8 && signals.currentHour <= 20;
+}
+```
+
+### 8.2 Geofencing Implementation
+
+- Use `expo-location` with `startGeofencingAsync`
+- Maximum 10 active geofences at any time
+- Default radius: 200m, configurable 100–500m
+- Location data processed on-device only
+
+---
+
+## 9. Sync Architecture
+
+### 9.1 Sync Strategy
+
+- **Write-path:** SQLite → sync_queue → background worker when online
+- **Read-path:** Always reads from SQLite (no wait)
+- **Conflict resolution:** Last-write-wins using `client_updated_at`
+- **Sync frequency:** On app foreground + every 5 minutes when active + on token refresh
+
+### 9.2 Encryption for Sync
+
+AES-256-GCM encryption using derived key from password:
+
+```typescript
+async function deriveUserEncryptionKey(userId: string, userPassword: string): Promise<CryptoKey> {
+  const keyMaterial = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(userPassword),
+    'PBKDF2',
+    false,
+    ['deriveKey']
+  );
+  
+  return crypto.subtle.deriveKey(
+    {
+      name: 'PBKDF2',
+      salt: new TextEncoder().encode(userId),
+      iterations: 310000,
+      hash: 'SHA-256',
+    },
+    keyMaterial,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt', 'decrypt']
+  );
+}
+```
+
+---
+
+## 10. Push Notification Architecture
+
+### 10.1 Notification Types
+
+| Type | Trigger | Delivery |
+|---|---|---|
+| Sunday Reckoning | Sunday 7 PM | FCM/APNs |
+| Context Moment | Geofence | Local only |
+| Team task | Server event | FCM/APNs |
+| Blocker insight | Weekly | FCM/APNs |
+| Friction intervention | Session start | In-app only |
+
+**Rule:** Friction interventions are NEVER delivered as push notifications.
+
+---
+
+## 11. Security Requirements
+
+### 11.1 Authentication
+
+- JWT: 1-hour expiry
+- Refresh tokens: 30-day expiry, rotated on use
+- Rate limiting: 5 failures → 15-minute lockout
+- Password min: 8 characters
+
+### 11.2 API Security
+
+- HTTPS enforced
+- Input validation via Zod schemas
+- SQL injection prevention via Drizzle ORM
+- Supabase RLS policies enforced
+
+### 11.3 Data Security
+
+- Task content encrypted at rest (SQLCipher Phase 2)
+- Sync payloads encrypted before upload
+- Server never stores decrypted individual task content
+- Biometric/PIN optional per app open
+- Auto-lock after 10 minutes background
+
+---
+
+## 12. Performance Requirements
+
+| Metric | Target | Notes |
+|---|---|---|
+| App cold start | < 2s | Redmi Note 12 baseline |
+| Mood → task list | < 300ms | SQLite query, offline |
+| Task completion animation | 60 fps | Reanimated v3 |
+| Task add (no cap) | < 100ms | Async sync |
+| Friction calculation | < 50ms | SQLite aggregate |
+| ML inference | < 100ms | TF Lite on-device |
+
+---
+
+## 13. Error Handling Strategy
+
+### 13.1 Error Categories
+
+**Silent failures (log only):**
+- Background sync failures (retry silently)
+- Analytics delivery failures
+- ML model inference errors (fall back to static)
+
+**Graceful degradation:**
+- Calendar unavailable → hide time features
+- Location denied → disable geofencing, show explanation
+- Server unreachable → full offline mode + badge
+
+**User-facing errors:**
+- Auth failure → "Session expired. Sign in again."
+- Sync conflict → Show resolver UI
+- Team access denied → "No access to workspace."
+
+### 13.2 Retry Logic
+
+```typescript
+const SYNC_RETRY_CONFIG = {
+  maxAttempts: 3,
+  backoffMs: [1000, 5000, 30000],
+  retryOn: [408, 429, 500, 502, 503, 504],
+};
+```
+
+---
+
+## 14. Testing Requirements
+
+### 14.1 Unit Tests (80% coverage target)
+
+- MoodMatchingService: all mood/task combinations
+- FrictionScoreService: scoring, threshold, reset
+- TaskCapService: enforcement, resolution, edges
+- ReckoningService: flagging, outcomes
+- SyncEncryptionService: encrypt/decrypt roundtrip
+
+### 14.2 Integration Tests
+
+- Full task lifecycle: create → friction → intervention → complete
+- Cap enforcement: 14 tasks → 15th attempt → resolution → success
+- Sync roundtrip: local write → push → pull → decrypt
+- Sunday Reckoning: full conversation flow
+
+### 14.3 E2E Tests (Detox)
+
+- Onboarding completion
+- Mood → list update
+- Task swipe complete
+- Reckoning conversation
+- Team task assignment
+
+### 14.4 Performance Tests
+
+- SQLite with 500 tasks
+- Mood matching with 15 active
+- Sync push with 100 operations
+- App startup with large DB
+
+---
+
+## 15. Open Technical Decisions
+
+1. **SQLCipher in Phase 1?** Adds 200KB, complexity. Defer to Phase 2?
+
+2. **op-sqlite vs expo-sqlite?** op-sqlite faster but requires bare workflow. Ready to eject in Phase 1?
+
+3. **Key management on password change?** Complex re-encryption needed. Defer sync to Phase 2?
+
+4. **Conflict UI vs last-write-wins?** Current: last-write-wins. Add UI for title conflicts in Phase 2?
+
+5. **TF Lite model size budget?** Keep under 1MB total. Ship in bundle or download post-install?
+
+---
+
+*This TRD is a living document. Phase 2 and Phase 3 sections will expand as Phase 1 ships and production data arrives.*
+
+*Next step: Engineering review of Sections 4, 5, 6 by EOW. Flag blockers or alternatives in GitHub Discussions.*

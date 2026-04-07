@@ -1,0 +1,474 @@
+# Product Requirements Document
+### IntentList — The Todo App That Takes Responsibility for Completion
+
+**Version:** 1.0
+**Date:** March 10, 2026
+**Author:** Co-founder & Product Lead
+**Status:** Draft — Internal Review
+
+---
+
+## 1. Executive Summary
+
+IntentList is a context-aware task completion app that moves beyond traditional todo list management. While existing apps optimize for task *storage*, IntentList optimizes for task *completion* by understanding the user's mental state, behavioral patterns, and real-world context. The product targets knowledge workers and busy professionals who have tried and abandoned existing productivity apps due to overwhelm, inconsistency, and guilt accumulation.
+
+**Primary Success Metric:** 7-day task completion rate ≥ 65% (industry average: ~41%)
+
+---
+
+## 2. Problem Statement
+
+### 2.1 Core Problems
+
+- **The Graveyard Problem** — Users add tasks they never complete. Lists become overwhelming graveyards of guilt rather than actionable systems.
+- **The Static List Problem** — Every existing app shows the same list regardless of the user's current energy, time availability, or mental state.
+- **The Friction Blindspot** — Apps have no awareness of *why* tasks are being avoided, so they keep surfacing the same blocked tasks endlessly.
+- **The Notification Noise Problem** — Time-based reminders fire at irrelevant moments, training users to ignore them entirely.
+- **The Overfilling Problem** — There is no friction to adding tasks, so users add 60 items and their brain gives up prioritizing.
+
+### 2.2 User Research Insights
+
+From informal interviews with 40 professionals (ages 24–35, Hyderabad):
+- 78% said their current todo list has tasks older than 2 weeks
+- 83% said they felt guilty looking at their task list rather than motivated
+- 91% had tried and abandoned at least 2 productivity apps in the last year
+- Top reason for abandonment: "It stopped feeling useful" (not missing features — missing *results*)
+
+---
+
+## 3. Goals and Non-Goals
+
+### 3.1 Goals
+
+- Build a product that measurably improves task completion rates for individual users
+- Create a behavioral intelligence layer that understands *why* tasks are avoided
+- Surface the right tasks at the right moment based on real context
+- Build a sustainable free-to-paid conversion model through team features
+- Establish trust through a privacy-first, on-device data philosophy
+
+### 3.2 Non-Goals
+
+- We are **not** building a project management tool (no Gantt charts, no timelines)
+- We are **not** building a note-taking or knowledge management system
+- We are **not** building a calendar app — we integrate with calendars, we don't replace them
+- We are **not** competing on feature breadth — we compete on completion outcomes
+- We are **not** building an AI chatbot — conversational UI is scripted and intentional
+
+---
+
+## 4. Target Users
+
+### 4.1 Primary Persona — "Priya"
+
+- **Age:** 25–35
+- **Role:** Product manager, freelancer, startup operator, consultant
+- **Behavior:** Intelligent, self-aware, wants to be organized, has tried multiple productivity tools
+- **Pain Point:** Her reality changes daily — some days she has deep focus blocks, others she's in back-to-back meetings. No current app accounts for this variance
+- **Quote:** *"I know what I need to do. I just can't figure out what to do *right now*."*
+
+### 4.2 Secondary Persona — "Team Lead Arjun"
+
+- **Age:** 28–40
+- **Role:** Engineering lead, startup founder, team manager
+- **Behavior:** Manages both personal tasks and shared team obligations
+- **Pain Point:** Can't see what his team is genuinely blocked on versus what's just being avoided
+- **Quote:** *"I don't want to micromanage. I just want to know when something is actually stuck."*
+
+### 4.3 Anti-Persona (Who We Are NOT Building For)
+
+- Power users who want highly configurable systems (they have Notion and Obsidian)
+- Enterprise IT buyers who want deep integrations (we'll get there, not in Phase 1–2)
+- Users who want a social/gamified productivity experience
+
+---
+
+## 5. Product Overview and Feature Set
+
+### 5.1 Feature Hierarchy
+
+**Must Have (Phase 1 — MVP)**
+- Mood-state based task surfacing
+- Task input with context tagging
+- Active task cap (15 tasks)
+- Basic task CRUD (Create, Read, Update, Delete)
+- Backlog / Someday list
+
+**Should Have (Phase 2)**
+- Friction mapping and behavioral nudges
+- Sunday Reckoning conversation flow
+- Sub-task generation from friction triggers
+- Person-linked follow-up tasks
+
+**Could Have (Phase 3)**
+- True Context Moment (location + calendar + time)
+- Calendar integration (Google, Outlook)
+- Android and iOS native apps
+- Team workspace and shared task visibility
+
+**Won't Have (V1)**
+- Recurring task templates
+- Integrations with Slack, Jira, Notion (post-MVP)
+- Analytics dashboards
+- Custom themes and views
+
+---
+
+## 6. Detailed Feature Specifications
+
+### 6.1 Mood-State Entry Screen
+
+**Description:** The first screen a user sees upon opening the app each session. A single contextual question that calibrates which tasks are surfaced.
+
+**User Flow:**
+1. User opens app
+2. Presented with: *"How are you walking in today?"*
+3. Selects one of five states:
+   - 🔥 Focused and sharp — deep work available
+   - 🪫 Running on low — need easy wins
+   - ⚡ In between things — have 20–30 minutes
+   - 🎨 Creative headspace — good for brainstorming/writing
+   - ✅ Just want to clear small things — errands and quick tasks
+4. App transitions to Focused Task View showing 4–6 matched tasks
+5. Mood state persists for the session unless manually changed
+
+**Task-to-Mood Mapping:**
+- Each task carries a hidden "required state" tag — set by the user at input, adjusted by ML over time
+- Mapping is fuzzy: "Focused and sharp" also shows "In between things" tasks if the focused list has fewer than 4 items
+- User can override and see full list via "Show everything" toggle (available but not prominent)
+
+**Design Requirements:**
+- Mood selection UI must take under 3 seconds to complete
+- No more than 5 options — ever
+- Friendly, non-corporate language — no "Priority Matrix" type framing
+- Accessible: full screen tap targets, not small buttons
+
+**Acceptance Criteria:**
+- [ ] Mood-state screen appears on every cold open and after 4+ hours of inactivity
+- [ ] Task list updates immediately upon mood selection with no perceptible lag
+- [ ] "Show everything" is available but requires deliberate action
+- [ ] Selected mood is stored locally and used for pattern analysis (on-device only)
+
+---
+
+### 6.2 Task Input System
+
+**Description:** A fast, low-friction task input experience that captures just enough context without slowing the user down.
+
+**User Flow:**
+1. User taps "+" or uses quick-add shortcut
+2. Types task name in natural language
+3. Optional: selects required mental state (defaults to "any")
+4. Optional: adds a person tag (links to contact for follow-up tracking)
+5. Optional: estimates duration (5 min / 15 min / 30 min / 1 hour / 2+ hours)
+6. Task is added to active list if under 15 tasks, otherwise triggers Cap Resolution Flow
+
+**Input Intelligence (Phase 2+):**
+- Natural language parsing: "Call Rahul tomorrow at 5" → auto-sets person tag to Rahul, due date to tomorrow, time context to evening
+- Duration estimation learning: if user consistently finishes "quick calls" in 20 minutes, app adjusts its 15-min estimate category accordingly
+
+**Cap Resolution Flow (when active list = 15):**
+- Adding a 16th task triggers a modal: *"You're at 15 active tasks. To add '[new task]', let's clear space."*
+- Shows 3 oldest/lowest-priority tasks with options: Done / Move to Someday / Delete
+- User must resolve at least one before proceeding
+- Cannot be bypassed — this is a deliberate friction point
+
+**Acceptance Criteria:**
+- [ ] Task can be added in under 5 seconds with zero required fields beyond the name
+- [ ] Cap enforcement triggers at exactly 15 active tasks, no exceptions in UI
+- [ ] Natural language date parsing works for common Indian English expressions ("next Monday", "by EOD", "this weekend")
+- [ ] Person tagging surfaces existing contacts from device (with permission)
+
+---
+
+### 6.3 Focused Task View
+
+**Description:** The primary home screen of the app. Not a full list — a curated, mood-matched surface of 4–6 tasks.
+
+**Layout:**
+- Task cards, not list rows — each card has task name, estimated duration, and a subtle context tag
+- Top of screen shows current mood state with easy one-tap change option
+- Cards are dismissible left (snooze to later today) and right (mark complete)
+- Below the focused cards: a subtle "X more tasks in your list" link — visible but not prominent
+
+**Task Card Content:**
+- Task name (primary, large)
+- Duration estimate (secondary, small)
+- Friction indicator (Phase 2): a subtle visual cue — not an alarm, just a quiet dot — if this task has been skipped before
+- Person tag if applicable
+
+**Interaction Design:**
+- Completing a task: right swipe → satisfying animation → new task from matched mood slides in
+- Snoozing a task: left swipe → "When should I resurface this?" → Later today / Tomorrow morning / This weekend
+- Tapping a task: opens detail view with sub-tasks, notes, and history
+
+**Acceptance Criteria:**
+- [ ] Focused view never shows more than 6 tasks
+- [ ] Completing a task triggers a micro-animation that feels rewarding (not just a checkmark disappearing)
+- [ ] Snooze options are time-contextual — "this weekend" doesn't appear on a Monday at 9 AM if you have a busy schedule
+- [ ] View reloads without full screen refresh when a task is completed
+
+---
+
+### 6.4 Friction Mapping System (Phase 2)
+
+**Description:** A behavioral intelligence layer that detects task avoidance and initiates helpful interventions.
+
+**Friction Score Calculation:**
+Each task accumulates a friction score based on:
+- Number of times scrolled past without tapping (+1 per scroll-past)
+- Number of due date moves (+3 per move)
+- Number of snoozes (+2 per snooze)
+- Time since creation relative to estimated duration (+variable)
+- Number of session opens without interaction (+1 per session)
+
+Friction threshold for intervention: score ≥ 8
+
+**Intervention Flow:**
+When friction threshold is crossed, at the start of the user's next session (not mid-session):
+
+*"Hey, you've passed '[task name]' a few times. What's making it hard?"*
+
+User selects from:
+1. **It's unclear what to do first** → App asks: "Want me to help break this into steps?" → Generates 2–4 sub-tasks using a rule-based template library (not generative AI in Phase 2)
+2. **It feels too big** → Same as above, emphasis on breaking it down
+3. **I'm waiting on someone** → App asks: "Who?" → Adds a follow-up reminder tied to that person: "Has [person] responded about [task]?"
+4. **I just don't want to do it** → App responds warmly: "Totally fair. Want to schedule a specific 15-minute block this week to just push through it, or honestly — is it still worth doing?" → Options: Schedule it / Move to Someday / Delete it
+5. **It's actually done, I forgot** → Marks complete, no questions asked, positive reinforcement
+
+**Design Principles for Friction Interventions:**
+- Maximum one friction intervention per session — never stack multiple
+- Tone is non-judgmental and warm — no language like "you've been avoiding this"
+- Interventions happen at session *start*, never mid-task or as a push notification
+- User can dismiss ("Not now") — dismissal itself adds a small friction score increment
+
+**Acceptance Criteria:**
+- [ ] Friction score is calculated entirely on-device, never transmitted to servers
+- [ ] Intervention appears at most once per session
+- [ ] Sub-task generation for "too big / unclear" produces 2–4 actionable steps based on task category templates
+- [ ] Person-linked follow-up creates a new task that references the original
+- [ ] "Delete it" option on avoidant tasks has a one-step confirmation, not two (we want it to be easy to let go)
+
+---
+
+### 6.5 Sunday Reckoning
+
+**Description:** A weekly conversational review that helps users clear zombie tasks, re-commit to what matters, and start Monday with an honest, clean list.
+
+**Trigger:**
+- Notification at 7:00 PM local time every Sunday
+- Optional: user can reschedule trigger to Saturday evening or Sunday morning in settings
+- If user doesn't open it Sunday, surfaces as a gentle banner on Monday morning
+
+**Conversation Flow:**
+The Reckoning is a scripted conversational UI — warm, friendly tone. It is NOT a generative AI chat.
+
+**Opening message:**
+*"Hey, let's spend 3 minutes getting ready for the week ahead. No judgment — just honesty."*
+
+**Flow for each flagged task (tasks that were moved, skipped 2+ times, or not touched in 7 days):**
+
+> *"You moved '[task name]' [X] times this week."*
+> *"What's the real story here?"*
+
+Options:
+- **I'll do it this week** — task stays active, friction score resets
+- **Schedule a specific time** — opens a time-picker, blocks 30 minutes in calendar (Phase 3+)
+- **I'm waiting on someone** — converts to follow-up task
+- **Honestly, it's not important anymore** — moves to someday or deletes
+- **It's done, just forgot to check it** — marks complete
+
+**Closing:**
+After all flagged tasks are processed:
+*"Nice. You've got [X] things on your active list. You're ready for the week."*
+If X > 12: gentle nudge — *"That's a full plate. Want to pick your top 3 priorities so you know where to start Monday morning?"*
+
+**Acceptance Criteria:**
+- [ ] Reckoning only surfaces tasks that meet the flagging criteria (moved 2+ times, or untouched for 7 days)
+- [ ] Conversation completes in under 4 minutes for a typical user (tested with 5–8 flagged tasks)
+- [ ] All decisions made in the Reckoning take immediate effect — no "save changes" step
+- [ ] Skipping the Reckoning entirely is allowed — no guilt-tripping language if user dismisses
+- [ ] Reckoning state is saved if interrupted — user can resume where they left off
+
+---
+
+### 6.6 True Context Moment — Location + Calendar Intelligence (Phase 3)
+
+**Description:** Smart, multi-signal notifications that only fire when a task is *genuinely actionable right now*.
+
+**Signal Inputs:**
+- GPS location (with permission)
+- Calendar free/busy status (with integration)
+- Time of day
+- Task duration estimate
+- Device usage pattern (laptop open = active work mode, phone only = mobile mode)
+
+**True Context Moment Logic:**
+A location-linked task notification fires only when ALL of the following are true:
+1. User is within defined radius of relevant location (e.g., pharmacy, bank, specific office)
+2. Calendar shows a free block of at least [task duration estimate] + 10 minutes
+3. Current time is between 8 AM and 8 PM
+4. Task has not been snoozed in the last 4 hours
+
+**Device Behavior Rules (no location required):**
+- Laptop opened after 9 PM → hide tasks requiring 60+ minutes, surface only ≤30-minute tasks
+- App opened between 9–11 AM on a calendar-free morning → surface top deep work task with: *"You have a clear morning. Want to lock in on [task]?"*
+- First app open on a Monday → show Sunday Reckoning if not completed, otherwise show weekly intent summary
+
+**Acceptance Criteria:**
+- [ ] Location data is processed on-device, never stored on servers
+- [ ] Calendar integration is OAuth-based (Google Calendar v1, Outlook Phase 3b)
+- [ ] All three conditions must be simultaneously true for a location notification to fire
+- [ ] User can set "quiet hours" that override all context notifications
+- [ ] Notification includes task name, estimated time needed, and a one-tap "Not now — remind me next time I'm nearby"
+
+---
+
+## 7. Team Features (Paid Tier)
+
+### 7.1 Shared Task Ownership
+
+- Tasks can be assigned between team members within a shared workspace
+- Assignee sees the task in their personal IntentList — it appears as a normal task with a subtle "from [name]" tag
+- Assigner sees status: Not started / In progress / Done / Flagged as blocked
+
+### 7.2 Blocker Intelligence
+
+- If 2+ team members have flagged the same shared task as blocked or high-friction, the workspace owner receives an insight:
+  *"3 people have flagged '[task]' as blocked. This might be a dependency worth discussing as a team."*
+- This is surfaced as a weekly insight, NOT a real-time alert — we do not want this to feel like surveillance
+
+### 7.3 Team Reckoning (Paid)
+
+- Monday morning team summary: completion rate for the previous week, top 3 unresolved items, and any shared blockers
+- Framed as team health, not individual performance monitoring
+- Manager cannot see individual mood states — ever. That data is 100% private to the individual user.
+
+---
+
+## 8. Privacy and Data Architecture
+
+This is a core product principle, not just a legal requirement.
+
+### 8.1 On-Device Data (Never Transmitted)
+- Task content and names
+- Mood state selections
+- Behavioral friction scores
+- Location data
+- Calendar event content
+
+### 8.2 Server-Side Data (Anonymized, Aggregated)
+- App session count (no content)
+- Feature usage frequency
+- Completion rate metrics (task marked complete = 1, no task content)
+- Crash reports
+
+### 8.3 Team Data (Encrypted, User-Controlled)
+- Shared task names and status — stored encrypted, users can export and delete at any time
+- No team data is used for product analytics or ML training without explicit opt-in
+
+### 8.4 Privacy Principles
+- No task content ever leaves the device for individual users
+- On-device ML model runs locally using TensorFlow Lite
+- Users can export all their data as JSON at any time
+- Account deletion removes all server-side data within 24 hours, with confirmation
+
+---
+
+## 9. Launch and Go-to-Market Strategy
+
+### 9.1 Phase 1 Launch — Closed Beta (Month 1–3)
+- 200 users, manually recruited from Hyderabad startup community, ProductHunt, and indie hacker communities
+- Web app only — no App Store/Play Store listing
+- Direct Slack/WhatsApp group with beta users for daily feedback
+- Weekly founder office hours — 30-minute video calls with 5 users per week
+
+### 9.2 Phase 2 Launch — Public Web Beta (Month 4–6)
+- ProductHunt launch targeting Top 5 Product of the Day
+- Written launch story on Substack and shared on LinkedIn — framing: *"We built a todo app that takes responsibility for your completion rate. Here's what we learned from 200 users."*
+- Target communities: r/productivity, r/startups, Indie Hackers, Twitter/X productivity creators
+- Referral program: invite 3 friends → unlock Team features free for 30 days
+
+### 9.3 Phase 3 Launch — Mobile App (Month 7–9)
+- Android first (Google Play Store)
+- iOS 6 weeks later (App Store)
+- ASO (App Store Optimization) focused on: "task completion app," "todo app that works," "productivity for busy professionals"
+- PR angle: completion rate data from beta — *"Our users complete 72% of their tasks. The average app user completes 41%."*
+
+---
+
+## 10. Risks and Mitigations
+
+| Risk | Likelihood | Impact | Mitigation |
+|---|---|---|---|
+| Users dislike the 15-task cap | High | Medium | Make it configurable in settings (10/15/20) but default to 15; educate during onboarding |
+| Mood-state input feels like friction | Medium | High | A/B test placement — try inline (above task list) vs. full-screen on open |
+| Friction mapping feels invasive | Medium | High | Strict on-device-only policy; transparent explanation of what's being tracked in settings |
+| Low Sunday Reckoning adoption | High | Low | It's optional; completion rate is not a primary metric; make it feel rewarding not obligatory |
+| Calendar integration complexity delays Phase 3 | Medium | Medium | Build basic time-based intelligence first without calendar; add true calendar sync as enhancement |
+| Team features don't convert free users | Medium | High | Do 20 customer development interviews with team leads before building any team features |
+
+---
+
+## 11. Success Metrics
+
+### 11.1 North Star Metric
+**7-day task completion rate** — percentage of active tasks marked complete within 7 days of creation
+
+- Phase 1 target: ≥ 60% (vs. industry ~41%)
+- Phase 2 target: ≥ 68%
+- Phase 3 target: ≥ 75%
+
+### 11.2 Supporting Metrics
+
+**Engagement:**
+- D7 retention: ≥ 55% (industry average for productivity apps: ~30%)
+- D30 retention: ≥ 35%
+- Daily active users / Monthly active users ratio: ≥ 0.45
+
+**Product Health:**
+- Average tasks completed per user per week
+- Friction intervention acceptance rate (did the user take action on the suggestion?)
+- Sunday Reckoning completion rate (% of users who complete the full flow)
+- Task cap enforcement events per user per week (indicates active prioritization)
+
+**Business:**
+- Free to paid conversion rate: target 8% in month 6
+- Monthly recurring revenue (MRR) growth: 20% month-over-month through end of Year 1
+- Net Promoter Score: target ≥ 50 by end of Phase 2
+
+### 11.3 Anti-Metrics (Things We Explicitly Do NOT Optimize For)
+- Total tasks added (we don't want more tasks, we want more completed tasks)
+- Time spent in app (we want efficient sessions, not addictive engagement)
+- Notification volume (fewer, higher-quality notifications is the goal)
+
+---
+
+## 12. Milestones and Timeline
+
+### Phase 1 — MVP (Days 1–90)
+- Week 1–2: Design system, component library, core task CRUD
+- Week 3–4: Mood-state input flow and task-mood matching logic
+- Week 5–6: Focused task view, swipe interactions, completion animations
+- Week 7–8: Active task cap (15) + Cap Resolution Flow + Backlog
+- Week 9–10: Onboarding flow (3 screens max) + beta user recruitment
+- Week 11–12: Beta launch to 200 users, feedback loop, iteration
+
+### Phase 2 — Intelligence Layer (Days 91–180)
+- Week 13–15: Friction score system (on-device)
+- Week 16–17: Friction intervention conversation flows
+- Week 18–19: Sunday Reckoning
+- Week 20–21: Sub-task generation from friction + person tagging
+- Week 22–24: Public web beta launch + feedback iteration
+
+### Phase 3 — Context + Mobile (Days 181–270)
+- Week 25–27: Google Calendar integration
+- Week 28–29: Location services + True Context Moment logic
+- Week 30–31: Android native app (React Native → Play Store)
+- Week 32–33: Team workspace (Paid Tier v1)
+- Week 34–36: iOS App Store launch + team feature pricing rollout
+
+---
+
+*This document is a living spec. All feature details should be revisited after each phase of user feedback. No feature in Phase 2 or beyond is locked until Phase 1 data is reviewed.*
+
+*Next step: Engineering review of Phase 1 scope by EOW. Design wireframes for mood-state screen and focused task view due in 10 days.*
